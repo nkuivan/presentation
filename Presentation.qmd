@@ -1,0 +1,421 @@
+---
+title: "Machine learning and causal inference: Superlearner and Targeted Maximum Likelihood estimation"
+author: "Ivan Nicholas Nkuhairwe"
+format: revealjs
+editor: visual
+citation: true
+bibliography: library.bib
+smaller: true
+scrollable: true
+slide-number: true
+---
+
+## Machine learning: Thin slice.
+
+Machine Learning is an interdisciplinary field that uses statistics, probability, algorithms to learn from data and provide insights which can be used to build intelligent applications[@Nabi2019].
+
+Machine learning is a branch of artificial intelligence and computer science which focuses on the use of data and algorithms to imitate the way that humans learn, gradually improving its accuracy.[@IBM2020]
+
+Machine learning classifiers can be split into three.
+
+-   Supervised machine learning: Uses labeled data-sets to train or supervise algorithms into classifying data or predicting outcomes accurately. E.g, neural networks, decision trees, linear regression and support vector machines.
+
+### Continued..
+
+-   Unsupervised machine learning: Doesn't require human intervention;the algorithms discover hidden patterns in data; analyze and cluster unlabeled data-sets. E.g K-means clustering algorithms.
+
+-   Semi-supervised machine learning: Best of both worlds. Uses a smaller labeled data set during training to guide classification and feature extraction from a larger unlabeled data set.
+
+Reinforcement machine learning: closest type to how humans learn. Algorithm learns by interacting with its environment whose result leads to a positive or negative reward. E.g temporal difference, deep adversarial networks and Q-learning[@IBM2020].
+
+## Why targeted learning
+
+According to [@VanderLaan2022], the common assumption in current practice is that there exists a specific parametric form for the data-generating distribution.
+
+This over simplification leads to model misspecification hence introducing bias: complicates the possibility of answering research questions.
+
+The targeted learning paradigm eliminates this through true representation of the data-generating distribution corresponding to the observed data.
+
+Main objective: formulate the statistical estimation problem exactly, so that one can attune to the problem the best possible estimation procedure.
+
+## Super-learning(SL)
+
+Prediction is a typical task in data analysis. Even in the scenario of causal effect estimation,prediction tasks are embedded in the procedure.TMLE is an example where prediction is required to estimate outcome regressions and propensity scores prior to the targeted step[@VanderLaan2022].
+
+A multitude of strategies aka algorithms, estimators and learners to model the relationships from data exist.For various data, either data-algorithms with the capability of handling complex relationships will suffice or parametric regression learners. Tricky bit lies with choice of strategy best suited for the data [@VanderLaan2022].
+
+Solution is Superlearner; solves the problem of algorithm selection by considering a wide range of them, from simple parametric regressions to the most complex machine learning algorithms [@VanderLaan2022].
+
+-   SL is a pre-specified, data-adaptive, and theoretically grounded approach for predictive modeling.
+
+-   Proven to be adaptive and robust in a variety of applications.
+
+### Considerations when specifying Super-learner: Informative detour
+
+According to [@Phillips2022],
+
+**1.Specify the performance metric for the discrete super-learner**; a performance metric quantifies the success of an estimation prediction function.
+
+-   Should align with intended real world use of predictions
+
+-   Should be optimized(minimized or maximized) by the true prediction function:ensures that the evaluation corresponds to the trained algorithm's success in approximating the true prediction function.
+
+**2.Derive the effective sample size**; complexity of a prediction task and amount of information in data dictate how much can be learned from a dataset. In larger sample sizes compared to smaller, the algorithms tend to learn more but larger sample sizes too can have sparsity in information. E.g. If Y is a binary rare event, then information content is limited by the size of the minority class.
+
+Effective sample size denoted as $\mathbf n_{eff}$, is an important proxy for information in data. It robustifies performance in SL specification.
+
+-   Y is continuous,$\mathbf n_{eff}=\mathbf n$ the number of independent and identically distributed(i.i.d) observations in the dataset. (If observations in the data are clustered, such as repeated measures on the same individual, then $\mathbf n$ is the number of independent clusters.)
+
+-   Y is binary, then the amount of information in the data is limited by the number of events or non-events, whichever is the minority ($\mathbf n_{rare}$). In this case, we take the prevalence into account by defining $\mathbf n_{eff}= min(\mathbf n, 5*\mathbf n_{rare})$
+
+### Continued...
+
+**3.Define the V-fold cross-validation(CV) scheme**;CV predictive performance (CV risk) is an estimate of an algorithm's true out-of-sample predictive performance if it were trained on the entire analytic dataset (true risk).
+
+VFCV schemes assign every observation to a single validation set and to $V-1$ training sets, where $V$ is the number of folds. The sample size in each validation set and training set is $\approx$ $n/V$ and $n− (n/V)$, respectively.
+
+-   $V$ (number of folds) impacts bias and variance of the estimated CV risk.$V$ typically ranges between 2 and 20, with larger values recommended for smaller $\mathbf n_{eff}$. Further recommendations on selection of number of folds, stratified cross validation and clustered cross validation can be found in the article.
+
+**4.Form library of candidate learners**; an ideal, rich library is diverse in its learning strategies, able to adapt to a variety of underlying functional forms for the true prediction function, computationally feasible, and effective at handling high dimensional data.
+
+**5.Use discrete super learner to select the candidate with the best cross-validated predictive performance**;Ability to simultaneously evaluate all candidate learners and select the most efficient based of comparison of the performance metrics of each learner.
+
+## Flowchart for selection of SL
+
+![Adapted from [@Phillips2022]](consideration%20when%20selecting%20a%20SL.jpg){width="440"}
+
+## Implementation of Superlearner with sl3 from tlverse R package;
+
+Fitting any SL with `sl3` consists of the following three steps:
+
+1.  Define the prediction task with `make_sl3_Task`.
+
+2.  Instantiate the SL with `Lrnr_sl`.
+
+3.  Fit the SL to the task with `train`.
+
+**Predicting weight-height-z-score** (All R code is adapted from [@VanderLaan2022])
+
+-   First we load the data and libraries required in R
+
+```{r, warning=FALSE, message=FALSE, echo=TRUE, comment='', results='hide'}
+# libraries
+library(tlverse)
+library(sl3)
+library(data.table)
+library(knitr)
+library(kableExtra)
+library(readr)
+
+
+washb_data <- fread(
+  paste0(
+    "https://raw.githubusercontent.com/tlverse/tlverse-data/master/",
+    "wash-benefits/washb_data.csv"
+  ),
+  stringsAsFactors = TRUE
+)
+```
+
+### Define prediction task
+
+-   The `sl3_Task` object defines the prediction task of interest. Task in this illustration is to use the WASH Benefits Bangladesh example dataset to learn a function of the covariates for predicting weight-for-height Z-score `whz`.
+
+-   The `sl3_Task` keeps track of the roles the variables play in the prediction problem
+
+```{r,warning=FALSE, message=FALSE, echo=TRUE, comment=''}
+
+# create the task (i.e., use washb_data to predict outcome using covariates)
+task <- make_sl3_Task(
+  data = washb_data,
+  outcome = "whz",
+  covariates = c("tr", "fracode", "month", "aged", "sex", "momage", "momedu", 
+                 "momheight", "hfiacat", "Nlt18", "Ncomp", "watmin", "elec", 
+                 "floor", "walls", "roof", "asset_wardrobe", "asset_table", 
+                 "asset_chair", "asset_khat", "asset_chouki", "asset_tv", 
+                 "asset_refrig", "asset_bike", "asset_moto", "asset_sewmach", 
+                 "asset_mobile"))
+```
+
+### Make learners, include screeners
+
+-   Select candidate learners that one thinks maybe suited. One can base off the flow chart in previous slides to select learners.
+
+-   In this example we don't include screeners with the learners, a screener essentially returns a subset of covariates when applied.
+
+-   A screener ought to be coupled with a candidate learner, to define a new candidate learner that accounts for the reduced set of screener-returned covariates as its covariates. Covariate screening is vital when the dimensionality of the data is very large[@VanderLaan2022].
+
+-   To prevent biasing the estimate of an algorithm's predictive performance, screening of covariates that takes relationships with the outcome into account must be cross-validated. We cross-validate the screening of variables by adding screener-learner couplings as additional candidates in the SL library[@VanderLaan2022].
+
+```{r, warning=FALSE, message=FALSE, echo=TRUE, comment='', results='hide'}
+
+# list of all properties supported by at least one learner:
+sl3_list_properties()
+
+# Consider the outcome type,is it continuous or binary, and select the learners, whz is continuous.
+sl3_list_learners(properties = "continuous")
+
+## INSTANTIATE A POOL OF LEARNERS
+
+# generalized linear model (GLM) and a mean model 
+lrn_glm <- Lrnr_glm$new()
+lrn_mean <- Lrnr_mean$new()
+# penalized regressions:
+lrn_ridge <- Lrnr_glmnet$new(alpha = 0)
+lrn_lasso <- Lrnr_glmnet$new(alpha = 1)
+# spline regressions:
+lrn_polspline <- Lrnr_polspline$new()
+lrn_earth <- Lrnr_earth$new()
+# fast highly adaptive lasso (HAL) implementation
+lrn_hal <- Lrnr_hal9001$new(max_degree = 2, num_knots = c(3,2), nfolds = 5)
+# tree-based methods
+lrn_ranger <- Lrnr_ranger$new()
+lrn_xgb <- Lrnr_xgboost$new()
+# generalized additive model (GAM) and Bayesian GLM 
+lrn_gam <- Lrnr_gam$new()
+lrn_bayesglm <- Lrnr_bayesglm$new()
+# Stack of learners
+stack <- Stack$new(
+  lrn_glm, lrn_mean, lrn_ridge, lrn_lasso, lrn_polspline, lrn_earth, lrn_hal, 
+  lrn_ranger, lrn_xgb, lrn_gam, lrn_bayesglm
+)
+```
+
+### Instantiate and Train SL
+
+-   Now instantiate learners based off the knowledge from above
+
+-   `train` is then applied to the task for prediction.
+
+```{r, warning=FALSE, message=FALSE, echo=TRUE, comment=''}
+
+# Default meta-learner, which is non-negative least squares (NNLS) regression (Lrnr_nnls) for continuous outcome
+
+sl <- Lrnr_sl$new(learners = stack, metalearner = Lrnr_nnls$new())
+
+#set a random number generator so the results are reproducible, and we will also time it.
+
+start_time <- proc.time() # start time
+
+set.seed(1234)
+sl_fit <- sl$train(task = task)
+
+runtime_sl_fit <- proc.time() - start_time # end time - start time = run time
+runtime_sl_fit
+```
+
+## Super-learner and TMLE
+
+-   Super Learner is a general approach that can be applied to a diversity of estimation and prediction problems which can be defined by a loss function[@VanderLaan2022].
+
+It would be straightforward, to plug in the estimator returned by SL into the target parameter mapping. I.e.
+
+-   Suppose we interested in Average Treatment effect (ATE) of a binary treatment.
+
+$$\Psi_{0}=\mathbf E_{0,W}[\mathbf E_{0}(Y|A=1,W)- \mathbf E_{0}(Y|A=0,W)]$$
+
+-   One could use the SL that was trained on the original data to predict the outcome for all subjects under each intervention. All we would need to do is take the average difference between the counter-factual outcomes under each intervention of interest.
+
+-   However, such an estimate of ATE would be too biased since SL is optimized for estimation of the prediction function, and not the ATE.
+
+### continued...
+
+-   SL estimates from the plug-in give an estimator that is not an asymptotically linear estimator of the target estimand;the SL is not an efficient substitution estimator and does not admit statistical inference.
+
+Properties for an efficient estimator,
+
+-   An asymptotically linear estimator is one that converges to the estimand a $\frac{1}{\sqrt n}$ rate, thereby permitting formal statistical inference. I.e. p-values and confidence intervals[@VanderLaan2022].
+
+-   An efficient estimator is optimal in the sense that it has the lowest possible variance, and is thus the most precise. An estimator is efficient if and only if it is asymptotically linear with influence curve equal to the canonical gradient[@VanderLaan2022].
+
+-   However, one needn't worry about calculation of canonical gradients. This is because TMLE satisfies all these properties hence implementation of TMLE.
+
+-   TMLE is a general strategy that excels in constructing efficient and asymptotically linear plug-in estimators that are robust in finite samples.
+
+-   SL is remarkable for pure prediction, and for getting initial estimates of components in the likelihood (the first step of TMLE), but we need the second, targeting/updating/fluctuation, step to have the desirable statistical properties mentioned above [@VanderLaan2022].
+
+## SL and TMLE in action
+
+Using SL through package `sl3`, we estimate the outcome regression function $\mathbf E_{0}[\mathbf Y|\mathbf A,\mathbf W]$. It is also represented as $\overline{Q}_{0}(A,W)$ and the estimate $\overline{Q}_{n}(A,W)$
+
+-   TMLE takes the initial estimate $\overline{Q}_{n}(A,W)$ and an estimate of the propensity score $g_{n}(A|W)=P(A=1|W)$ and returns an updated estimate $\overline{Q}_{n}^{*}(A,W)$.
+
+-   TMLE updates: There are different types of TMLE algorithms and some times multiple for the same target parameter. For our target parameter; ATE, below is an example of an algorithm using $\overline{Q}_{n}^{*}(A,W)$ as the TMLE augmented estimate.
+
+$$f(\overline{Q}_{n}^{*}(A,W))=f(\overline{Q}_{n}(A,W))+\epsilon.H_{n}(A,W)$$
+
+-   where $f(.)$ is the appropriate link function. E.g $logit(x)=log(\frac{x}{(1-x)})$
+
+-   an estimate $\mathrm{\epsilon_{n}}$, of the coefficient $\epsilon$ of the clever covariate $H_{n}(A,W)$
+
+The form of covariate $H_{n}(A,W)$ differs across target parameters, and for ATE is,
+
+$$H_{n}(A,W)= \frac{A}{g_{n}(A\mid W)}-\frac{A}{1-g_{n}(A\mid W)}$$
+
+-   with $g_{n}(A\mid W)=\mathrm{P}(A=1\mid W)$ being the estimated propensity score, so the estimator depends both on the initial fit by `sl3` of the outcome regression $\overline{Q}_{n}$ and of propensity score $g_{n}$
+
+## Example: Estimating ATE using data from Collaborative Perinatal Project (CPP) in tmle3.
+
+-   A binary intervention variable, `parity01` an indicator of having one or more children before the current child
+-   A binary outcome, `haz01` -- an indicator of having an above average height for age.
+
+```{r, warning=FALSE, message=FALSE, comment=''}
+#Load libraries and data
+library(dplyr)
+library(tmle3)
+library(sl3)
+# load the data set
+data(cpp)
+cpp <- cpp %>%
+  as_tibble() %>%
+  dplyr::filter(!is.na(haz)) %>%
+  mutate(
+    parity01 = as.numeric(parity > 0),
+    haz01 = as.numeric(haz > 0)
+  )
+#Create copy of dataset
+cpp2 <- data.table::copy(cpp)
+```
+
+### Step 1
+
+Define the variable roles $(W,A,Y)$ by creating a list of these nodes. Include the following baseline covariates in `apgar1`, `apgar5`, `gagebrth`, `mage`, `meducyrs`, `sexn`.
+
+```{r, comment = ''}
+node_list <- list(
+  W = c(
+    "apgar1","apgar5","gagebrth","mage",
+    "meducyrs","sexn"
+  ),
+  A = "parity01",
+  Y = "haz01"
+)
+```
+
+### Step 2
+
+Handle missingness;
+
+Currently, missingness in `tmle3` is handled in a fairly simple way:
+
+-   Missing covariates are median- (for continuous) or mode- (for discrete) imputed, and additional covariates indicating imputation are generated.
+
+-   Missing treatment variables are excluded;observations are dropped.
+
+-   Missing outcomes are efficiently handled by the automatic calculation (and incorporation into estimators) of inverse probability of censoring weights (IPCW); this is also known as IPCW-TMLE and may be thought of as a joint intervention to remove missingness and is analogous to the procedure used with classical inverse probability weighted estimators[@VanderLaan2022].
+
+```{r, comment = ''}
+processed <- process_missing(cpp2, node_list)
+cpp2 <- processed$data
+node_list <- processed$node_list
+```
+
+### Step 3
+
+Create a spec object.`tmle3` implements a `tmle3_Spec` object that bundles a set of components into a specification ("Spec") that, with minimal additional detail, can be run to fit a TMLE
+
+```{r, comment = ''}
+ate_spec <- tmle_ATE(
+  treatment_level = "1",
+  control_level = "0"
+)
+```
+
+### Step 4
+
+Specify `sl3` base learners for estimation of,
+
+-   $\overline{Q}_{0} = \mathbb{E}_{0}(Y \mid A, W)$
+
+-   $g_{0} = \mathbb{P}(A = 1 \mid W)$.
+
+Specify the meta learner as well. Consider data types to choose appropriate meta learners.
+
+```{r, comment = ''}
+# choose base learners
+lrnr_mean <- make_learner(Lrnr_mean)
+lrnr_rf <- make_learner(Lrnr_ranger)
+
+#Define appropriate meta learner (both A,Y are binary)
+
+metalearner1 <- make_learner(
+  Lrnr_solnp,
+  loss_function = loss_loglik_binomial,
+  learner_function = metalearner_logistic_binomial
+)
+```
+
+### Step 5
+
+-   Define super-learners estimating each of $\overline{Q}_{0}$ and $g_{0}$
+
+-   Specify same meta learner for both from above.
+
+-   Make a list of both super-learners
+
+```{r, comment = ''}
+#Super-learners for A and Y
+sl_Y <- Lrnr_sl$new(
+  learners = list(lrnr_mean, lrnr_rf),
+  metalearner = metalearner1
+)
+sl_A <- Lrnr_sl$new(
+  learners = list(lrnr_mean, lrnr_rf),
+  metalearner = metalearner1
+)
+learner_list <- list(A = sl_A, Y = sl_Y)
+```
+
+### Step 6
+
+We now fit TMLE using all components from the steps above using the `tmle3` function.
+
+```{r, comment = ''}
+set.seed(1235)
+tmle_fit <- tmle3(ate_spec, cpp2, node_list, learner_list)
+print(tmle_fit)
+```
+
+-   The Average treatment effect estimate from TMLE is approximately, $\mathrm -0.332$.
+
+-   This can be interpreted as, having one or more children before current child decreased having an above average height-for-age by 33.2%.
+
+In order to draw causal inference, we assume that the conditions for causal inference were met;
+
+-   Positivity
+-   Conditional Exchangeability
+-   Treatment A being independent of the outcome Y
+-   Consistency
+
+## Conclusions
+
+Machine learning techniques provide flexibility when estimating and have been proven to return more accurate estimates than the parametric regressions for the case of medical statistical analysis.
+
+Currently, they have infiltrated the medical field with diverse applications such as,
+
+-   Radiotherapy in form of medical imaging diagnosis and improved medical image analysis.
+
+-   Disease outbreak predictions
+
+-   Smart health records
+
+-   Clinical trials and research.
+
+-   Drug discovery and manufacturing.
+
+## Machine Learning!!
+
+::: columns
+::: {.column width="50%"}
+![](images.png){width="250"}
+:::
+
+::: {.column width="50%"}
+![](images-not%20always%20right.jfif){width="333"}
+:::
+:::
+
+## References
+
+::: {#Ref}
+:::
